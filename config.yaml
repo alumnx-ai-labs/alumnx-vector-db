@@ -6,7 +6,7 @@ knn_k: 5
 default_retrieval_strategy:
   algorithm: knn
   distance_metric: cosine
-embedding_model: models/gemini-embedding-001
+embedding_model: models/gemini-embedding-2-preview
 output_dimensionality: 3072
 vector_size: 3072
 vector_store_path: ./vector_store/

@@ -20,6 +20,22 @@ class FakeEmbedder:
         base = float(len(text))
         return [base, 1.0, 0.0]
 
+    def embed_image(self, path: str, mime_type: str | None = None) -> dict:
+        desc = f"Fake description of image at {path}"
+        return {"description": desc, "embedding": self.embed_query(desc)}
+
+    def embed_audio(self, path: str, mime_type: str | None = None) -> dict:
+        desc = f"Fake description of audio at {path}"
+        return {"description": desc, "embedding": self.embed_query(desc)}
+
+    def embed_video(self, path: str, mime_type: str | None = None) -> dict:
+        desc = f"Fake description of video at {path}"
+        return {"description": desc, "embedding": self.embed_query(desc)}
+
+    def embed_text_file(self, path: str) -> dict:
+        desc = f"Fake content of text file at {path}"
+        return {"description": desc, "embedding": self.embed_query(desc)}
+
 
 def fake_config(tmp_path: Path):
     return SimpleNamespace(

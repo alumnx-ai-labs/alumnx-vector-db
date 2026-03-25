@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 
 from app.config import get_config
 from app.errors import error_response
-from app.services.ingestion import ingest_pdf
+from app.services.ingestion import ingest_file
 from app.utils import slugify_name
 
 
@@ -37,7 +37,8 @@ async def ingest(
 ):
     kb_name = _clean_optional_text(kb_name)
     config = get_config()
-    resolved_chunking_strategy = chunking_strategy or config.default_chunking_strategy
+    cleaned_strategy = _clean_optional_text(chunking_strategy)
+    resolved_chunking_strategy = cleaned_strategy or config.default_chunking_strategy
     embedding_model = _clean_optional_text(embedding_model)
     logger.info(
         "Ingest request received file=%s kb_name=%s chunking_strategy=%s chunk_size=%s overlap_size=%s overwrite=%s embedding_model=%s",
@@ -50,19 +51,21 @@ async def ingest(
         embedding_model,
     )
 
-    if not file.filename.lower().endswith(".pdf"):
-        return error_response(400, "INVALID_FILE_TYPE", "Only PDF files are supported in Phase 1.", {"source_filename": file.filename})
+    SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".png", ".jpg", ".jpeg", ".mp3", ".wav", ".mp4"}
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in SUPPORTED_EXTENSIONS:
+        return error_response(400, "INVALID_FILE_TYPE", f"Unsupported file type '{file_ext}'. Supported: {SUPPORTED_EXTENSIONS}", {"source_filename": file.filename})
 
     resolved_model = embedding_model or config.embedding_model
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as handle:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as handle:
         temp_path = Path(handle.name)
         content = await file.read()
         handle.write(content)
     logger.info("Upload stored temporarily at %s", temp_path)
 
     try:
-        response = ingest_pdf(
+        response = ingest_file(
             file_name=file.filename,
             file_path=str(temp_path),
             kb_name=kb_name,
