@@ -29,7 +29,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="NexVec", version="1.3.0", lifespan=lifespan)
+app = FastAPI(title="NexVec", version="1.4.0", lifespan=lifespan)
 
 app.include_router(documents_router)
 app.include_router(ingest_router)
