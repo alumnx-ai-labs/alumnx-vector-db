@@ -60,19 +60,23 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 ---
 
-## 🛠 Deployment & CI/CD (Production)
+## 🛠 Deployment & CI/CD
 
-The production environment is hosted on **Edge Production (EC2)** and managed via **PM2**.
+The service is deployed on EC2 and managed via **PM2**.
 
-- **Endpoint**: [http://13.126.130.56:8001/docs](http://13.126.130.56:8001/docs)
-- **Automatic Deploys**: Any push to the `main` branch triggers a GitHub Action that deploys the latest code to the server.
+- **Dev Endpoint**: [http://13.126.130.56:8001/docs](http://13.126.130.56:8001/docs)
+- **Prod Endpoint**: [http://13.205.59.184:8012/docs](http://13.205.59.184:8012/docs)
+- **CI Workflow**: Unit tests run in `.github/workflows/ci.yml`.
+- **Dev Deploy**: `.github/workflows/deploy-dev.yml` runs after a successful CI run on `dev`.
+- **Prod Deploy**: `.github/workflows/deploy-prod.yml` runs after a successful CI run on `main`.
+- **Merge Protection**: GitHub branch protection on `main` must require `CI / Unit Tests` if production merges should be blocked until tests pass.
 - **Manual Restart**: 
   ```bash
-  pm2 restart alumnx-vector-db
+  pm2 restart alumnx-vector-db-prod
   ```
 - **View Logs**:
   ```bash
-  pm2 logs alumnx-vector-db
+  pm2 logs alumnx-vector-db-prod
   ```
 
 ---

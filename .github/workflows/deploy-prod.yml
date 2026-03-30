@@ -1,18 +1,30 @@
 name: Deploy Prod
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
     branches:
       - main
 
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: true
+
 jobs:
   deploy:
+    if: >
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Deploy to Production Server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -20,7 +32,11 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
           script: |
-            if [ ! -d "~/alumnx-vector-db-prod" ]; then
+            if [ ! -d ~/alumnx-vector-db-prod ]; then
               git clone https://github.com/alumnx-ai-labs/alumnx-vector-db.git ~/alumnx-vector-db-prod
             fi
-            cd ~/alumnx-vector-db-prod && git fetch origin && git checkout main && git pull origin main && bash deploy.sh main 8012 alumnx-vector-db-prod
+            cd ~/alumnx-vector-db-prod
+            git fetch origin
+            git reset --hard origin/main
+            git clean -fd
+            bash deploy.sh main 8012 alumnx-vector-db-prod

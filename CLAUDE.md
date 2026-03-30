@@ -85,4 +85,10 @@ Tests live in `tests/` with fixtures in `conftest.py`. Tests mock the Google Gem
 
 ## Deployment
 
-CI/CD runs on push to `main` via `.github/workflows/deploy.yml` — SSH into AWS EC2, pull code, restart with PM2. Never push directly to `main`.
+CI/CD is split across `.github/workflows/ci.yml`, `.github/workflows/deploy-dev.yml`, and `.github/workflows/deploy-prod.yml`.
+
+- `CI` runs unit tests on every push and on pull requests targeting `dev` or `main`.
+- `Deploy Dev` runs only after a successful `CI` workflow on `dev`.
+- `Deploy Prod` runs only after a successful `CI` workflow on `main`.
+
+The production rollout target is the Alumnx Vector DB service on EC2 port `8012`. GitHub branch protection is still required on `main` if merges must be blocked until `CI / Unit Tests` passes.

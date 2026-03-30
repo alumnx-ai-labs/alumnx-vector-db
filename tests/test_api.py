@@ -66,6 +66,7 @@ def client(monkeypatch):
     monkeypatch.setattr("app.services.retrieval_service.VectorFileStore", lambda: vfs)
     monkeypatch.setattr("app.routers.documents.PostgresStore", lambda: pg)
     monkeypatch.setattr("app.routers.documents.VectorFileStore", lambda: vfs)
+    monkeypatch.setattr("app.main.PostgresStore", lambda: pg)
     monkeypatch.setattr(
         "app.services.ingestion.extract_pdf_pages",
         lambda _: [SimpleNamespace(text="Full resume text content.")],

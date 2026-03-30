@@ -5,8 +5,8 @@ NexVec is a Phase 1 FastAPI service for ingesting PDF documents, chunking them, 
 ## Requirements
 
 - Python 3.12+
-- A valid `GOOGLE_API_KEY`
-- A local virtual environment at `env/` or another Python environment with the project dependencies installed
+- `uv` for dependency management
+- A valid `GOOGLE_API_KEY` for local runtime usage
 
 ## Project Layout
 
@@ -39,8 +39,8 @@ python -m venv env
 
 3. Install dependencies:
 
-```powershell
-.\env\Scripts\python.exe -m pip install -r requirements.txt
+```bash
+uv sync
 ```
 
 ## Configure `.env`
@@ -61,26 +61,26 @@ Important:
 
 ## Run the API
 
-Start the server on port `8009`:
+Start the server:
 
-```powershell
-.\env\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8009
+```bash
+uv run uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 Then open:
 
-- http://localhost:8009/docs
-- http://localhost:8009/redoc
+- http://localhost:8000/docs
+- http://localhost:8000/redoc
 
 ## Run Tests
 
 Run the test suite from the `nexvec/` directory:
 
-```powershell
-.\env\Scripts\python.exe -m pytest -q
+```bash
+uv run pytest -q
 ```
 
-If `GOOGLE_API_KEY` is missing, the suite is configured to skip.
+The test suite uses dummy environment defaults in `tests/conftest.py`, so CI can run without live credentials.
 
 ## Endpoints
 
