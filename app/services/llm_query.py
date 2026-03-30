@@ -301,8 +301,20 @@ OUTPUT FORMAT — respond with ONLY this JSON (no markdown):
 {
   "sql": "<SQL>",
   "needs_vector": <true|false>,
-  "reason": "<one sentence>"
+  "reason": "<one sentence>",
+  "hypothetical_doc": "<text or null>"
 }
+
+hypothetical_doc rules:
+- Set ONLY when needs_vector = true
+- Write 2–4 sentences of realistic resume text (past-tense, first-person style) that would be
+  a PERFECT match for this query. Write it like an actual work experience or projects entry.
+  Be specific: include relevant technologies, role titles, and accomplishments.
+  Example for "Python ML engineer who built recommendation systems":
+  "Built end-to-end recommendation systems using Python and PyTorch at a Series B startup.
+   Developed collaborative filtering and matrix factorisation models serving 8M users.
+   Improved click-through rate by 21% through online A/B tested ranking pipelines."
+- When needs_vector = false, set hypothetical_doc to null
 
 ────────────────────────────────────────────────────────────
 EXAMPLES
@@ -545,6 +557,7 @@ class QueryClassification:
     sql: str
     needs_vector: bool
     reason: str
+    hypothetical_doc: str | None = None
 
 
 def classify_and_generate_sql(query: str) -> QueryClassification:
@@ -575,9 +588,18 @@ def classify_and_generate_sql(query: str) -> QueryClassification:
         sql = data["sql"].strip().rstrip(";")
         needs_vector = bool(data.get("needs_vector", False))
         reason = str(data.get("reason", ""))
+        hypothetical_doc = data.get("hypothetical_doc") or None
+        if hypothetical_doc:
+            hypothetical_doc = str(hypothetical_doc).strip() or None
 
-        logger.info("SQL=%s | needs_vector=%s | reason=%s", sql, needs_vector, reason)
-        return QueryClassification(sql=sql, needs_vector=needs_vector, reason=reason)
+        logger.info("SQL=%s | needs_vector=%s | reason=%s | hyde=%s",
+                    sql, needs_vector, reason, bool(hypothetical_doc))
+        return QueryClassification(
+            sql=sql,
+            needs_vector=needs_vector,
+            reason=reason,
+            hypothetical_doc=hypothetical_doc,
+        )
     except (json.JSONDecodeError, KeyError) as exc:
         logger.warning("JSON parse failed (%s) on: %r", exc, raw[:300])
         # Fallback: extract the first SELECT statement from raw text
@@ -588,5 +610,6 @@ def classify_and_generate_sql(query: str) -> QueryClassification:
                 sql=sql,
                 needs_vector=True,
                 reason="Fallback SQL extraction — vector enabled as safety net.",
+                hypothetical_doc=None,
             )
         raise ValueError(f"LLM returned unparseable response: {raw[:300]}") from exc

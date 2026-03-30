@@ -13,6 +13,7 @@ class MockPostgresStore:
     def __init__(self) -> None:
         self._users: dict[str, dict] = {}    # user_id → row
         self._resumes: dict[str, dict] = {}  # resume_id → row
+        self._chunks: dict[str, dict] = {}   # chunk_id → row
 
     def ensure_table(self) -> None:
         pass
@@ -115,6 +116,32 @@ class MockPostgresStore:
                 }
         return None
 
+    # ── Chunk operations ──────────────────────────────────────────────
+
+    def insert_chunks(self, chunks: list[dict]) -> None:
+        for chunk in chunks:
+            cid = chunk["chunk_id"]
+            if cid not in self._chunks:
+                self._chunks[cid] = chunk.copy()
+
+    def get_chunks_for_resume_ids(self, resume_ids: list[str]) -> list[dict]:
+        rid_set = set(resume_ids)
+        return [
+            c.copy() for c in self._chunks.values()
+            if c.get("resume_id") in rid_set
+        ]
+
+    def delete_chunks_for_resume(self, resume_id: str) -> list[str]:
+        to_delete = [cid for cid, c in self._chunks.items() if c.get("resume_id") == resume_id]
+        for cid in to_delete:
+            del self._chunks[cid]
+        return to_delete
+
+    def get_active_resume_count(self) -> int:
+        return sum(1 for r in self._resumes.values() if r.get("is_active"))
+
+    # ── Document operations ───────────────────────────────────────────
+
     def delete_document(self, source_filename: str) -> list[tuple[str, str]]:
         section_names = [
             "objectives", "work_experience_text", "projects",
@@ -137,6 +164,7 @@ class MockVectorFileStore:
     def __init__(self) -> None:
         self._vectors: dict[str, np.ndarray] = {}
         self._ids: dict[str, list[str]] = {}
+        self._raw_vectors: dict[str, np.ndarray] = {}
 
     def read(self, kb_name: str) -> tuple[np.ndarray, list[str]]:
         if kb_name not in self._ids:
@@ -166,9 +194,31 @@ class MockVectorFileStore:
         self._ids[kb_name] = [cid for cid, keep in zip(old_ids, mask) if keep]
         self._vectors[kb_name] = old_vecs[mask].astype(np.float32)
 
+    def append_raw(self, kb_name: str, chunk_ids: list[str], raw_vectors: np.ndarray) -> None:
+        if kb_name in self._raw_vectors:
+            self._raw_vectors[kb_name] = np.vstack([self._raw_vectors[kb_name], raw_vectors]).astype(np.float32)
+        else:
+            self._raw_vectors[kb_name] = raw_vectors.astype(np.float32)
+
+    def read_raw(self, kb_name: str) -> tuple[np.ndarray, list[str]]:
+        return np.empty((0, 3), dtype=np.float32), []
+
+    def read_jsonl(self, kb_name: str) -> list[dict]:
+        return []
+
+    def read_normalized_gz(self, kb_name: str) -> list[dict]:
+        return []
+
+    def read_index(self, kb_name: str) -> dict:
+        return {}
+
+    def sync_alternate_formats(self, kb_name: str) -> None:
+        pass
+
     def list_kb_names(self) -> list[str]:
         return sorted(self._ids.keys())
 
     def delete_kb(self, kb_name: str) -> None:
         self._vectors.pop(kb_name, None)
         self._ids.pop(kb_name, None)
+        self._raw_vectors.pop(kb_name, None)

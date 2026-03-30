@@ -15,6 +15,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "google-genai" },
     { name = "google-generativeai" },
+    { name = "hnswlib" },
     { name = "httpx" },
     { name = "nltk" },
     { name = "numpy" },
@@ -32,6 +33,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "google-genai", specifier = ">=1.68.0" },
     { name = "google-generativeai", specifier = ">=0.8.6" },
+    { name = "hnswlib", specifier = ">=0.8" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "nltk", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26" },
@@ -543,6 +545,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6f
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
 ]
+
+[[package]]
+name = "hnswlib"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cf/7a/1a9b1405f2eb59515f06c3074750b03e0e96edf7fee0f6dd6df81d9c21d7/hnswlib-0.8.0.tar.gz", hash = "sha256:cb6d037eedebb34a7134e7dc78966441dfd04c9cf5ee93911be911ced951c44c", size = 36206, upload-time = "2023-12-03T04:16:17.55Z" }
 
 [[package]]
 name = "httpcore"

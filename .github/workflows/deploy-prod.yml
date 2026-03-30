@@ -6,9 +6,13 @@ on:
       - main
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+  test:
+    uses: ./.github/workflows/reusable-tests.yml
 
+  deploy:
+    name: Deploy to EC2
+    needs: test
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

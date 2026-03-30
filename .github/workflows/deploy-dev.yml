@@ -6,9 +6,13 @@ on:
       - dev
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+  test:
+    uses: ./.github/workflows/reusable-tests.yml
 
+  deploy:
+    name: Deploy to EC2
+    needs: test
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,11 +24,11 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
           script: |
-            if [ ! -d ~/alumnx-vector-db ]; then
-              git clone https://github.com/alumnx-ai-labs/alumnx-vector-db.git ~/alumnx-vector-db
-            fi
-            cd ~/alumnx-vector-db
-            git fetch origin
-            git reset --hard origin/dev
-            git clean -fd
-            bash deploy.sh dev 8001 alumnx-vector-db
+              if [ ! -d ~/alumnx-vector-db ]; then
+                git clone https://github.com/alumnx-ai-labs/alumnx-vector-db.git ~/alumnx-vector-db
+              fi
+              cd ~/alumnx-vector-db
+              git fetch origin
+              git reset --hard origin/dev
+              git clean -fd
+              bash deploy.sh dev 8001 alumnx-vector-db

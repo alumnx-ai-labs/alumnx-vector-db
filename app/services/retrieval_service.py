@@ -8,8 +8,9 @@ import numpy as np
 from app.config import get_config
 from app.models import CandidateResult, QueryLogs, RetrieveRequest, RetrieveResponse
 from app.services.embedding.embedder import GeminiEmbedder
-from app.services.ingestion import EMBEDDABLE_SECTIONS, UNIVERSAL_VECTOR_STORE
+from app.services.ingestion import UNIVERSAL_VECTOR_STORE
 from app.services.llm_query import classify_and_generate_sql
+from app.services.store.hnsw_store import get_hnsw_store
 from app.services.store.postgres_store import PostgresStore
 from app.services.store.vector_file_store import VectorFileStore
 
@@ -27,8 +28,7 @@ def _benchmark_vector_formats(
     raw_query_vector: np.ndarray | None = None,
 ) -> tuple[dict[str, float], dict[str, int]]:
     """Read all vector storage formats and return (timings_ms, op_counts).
-    For the raw format, also runs the dot-product search (unnormalized) to show
-    the full cost of searching against raw vectors.
+    Observability benchmark — intentionally kept for early-stage diagnostics.
     """
     timings: dict[str, float] = {}
     counts: dict[str, int] = {}
@@ -53,7 +53,6 @@ def _benchmark_vector_formats(
     timings["vector_index_ms"] = _ms(t0)
     counts["vector_index_count"] = len(index)
 
-    # Raw vectors: read + full dot-product search without normalization
     t0 = time.perf_counter()
     raw_vecs, raw_ids = vfs.read_raw(kb_name)
     if raw_query_vector is not None and len(raw_ids) > 0:
@@ -66,15 +65,18 @@ def _benchmark_vector_formats(
 
 def retrieve_documents(request: RetrieveRequest) -> RetrieveResponse:
     """
-    RDS-first retrieval with LLM-driven routing.
+    RDS-first retrieval with LLM-driven routing and HyDE query enhancement.
 
     Flow:
-      1. LLM classifies the query → generates SQL + decides if vector search needed
+      1. LLM classifies the query → SQL + routing + hypothetical_doc (HyDE)
       2. Execute SQL → Postgres returns matching resume_ids
       3a. RDS-only: fetch full resume rows, return ranked as SQL matched them
-      3b. RDS + Vector: embed query → cosine similarity against SQL-filtered vectors
+      3b. RDS + Vector:
+           - Embed hypothetical_doc (if present) or raw query as retrieval_document
+           - Score all chunks for SQL-filtered resumes via HNSW / exact KNN
+           - Aggregate best score per resume_id
       4. Deduplicate by user_id — one result per person
-      5. Return ranked candidates + query logs (with per-stage timing_ms)
+      5. Return ranked candidates + query logs
     """
     config = get_config()
     k = request.k or config.knn_k
@@ -94,11 +96,12 @@ def retrieve_documents(request: RetrieveRequest) -> RetrieveResponse:
     embedding_model = request.embedding_model or config.embedding_model
     logger.info("Retrieve: query=%r k=%s model=%s", request.query, k, embedding_model)
 
-    # ── Step 1: Classify query → SQL + routing decision ───────────────
+    # ── Step 1: Classify query → SQL + routing + HyDE doc ─────────────
     sql_failed = False
     sql = ""
     needs_vector = False
     routing_reason = ""
+    hypothetical_doc: str | None = None
 
     try:
         t0 = time.perf_counter()
@@ -108,6 +111,7 @@ def retrieve_documents(request: RetrieveRequest) -> RetrieveResponse:
         sql = classification.sql
         needs_vector = classification.needs_vector
         routing_reason = classification.reason
+        hypothetical_doc = classification.hypothetical_doc
 
         t0 = time.perf_counter()
         resume_ids = pg.execute_sql_query(sql)
@@ -115,8 +119,8 @@ def retrieve_documents(request: RetrieveRequest) -> RetrieveResponse:
         op_counts["postgres_sql_count"] = len(resume_ids)
 
         logger.info(
-            "SQL returned %d resume_ids | needs_vector=%s | reason=%s",
-            len(resume_ids), needs_vector, routing_reason,
+            "SQL returned %d resume_ids | needs_vector=%s | hyde=%s | reason=%s",
+            len(resume_ids), needs_vector, bool(hypothetical_doc), routing_reason,
         )
     except Exception as exc:
         logger.warning("SQL classification/execution failed (%s), falling back to full scan", exc)
@@ -138,7 +142,6 @@ def retrieve_documents(request: RetrieveRequest) -> RetrieveResponse:
         timing["postgres_fetch_ms"] = _ms(t0)
         op_counts["postgres_fetch_count"] = len(resume_rows)
     elif needs_vector:
-        # SQL keyword filter too narrow for a semantic query — cast a wider net.
         logger.info(
             "SQL returned 0 for semantic query=%r — falling back to full-scan vector search",
             request.query,
@@ -233,47 +236,54 @@ def retrieve_documents(request: RetrieveRequest) -> RetrieveResponse:
     # ── Step 3: RDS + Vector path ──────────────────────────────────────
     logger.info("RDS + Vector path: scoring %d SQL-filtered resumes", len(resume_rows))
 
-    chunk_to_resume: dict[str, str] = {}
-    chunk_to_section: dict[str, str] = {}
-    for row in resume_rows:
-        for section in EMBEDDABLE_SECTIONS:
-            cid = row.get(f"{section}_chunk_id")
-            if cid:
-                chunk_to_resume[cid] = row["resume_id"]
-                chunk_to_section[cid] = section
-                break
-
-    # Embed query — keep raw vector before normalizing for raw benchmark
-    embedder = GeminiEmbedder(embedding_model)
+    # Load all chunks for the filtered resume pool from the chunks table
+    all_resume_ids = [r["resume_id"] for r in resume_rows]
     t0 = time.perf_counter()
-    raw_query_vector = np.asarray(embedder.embed_query(request.query), dtype=np.float32)
+    chunk_records = pg.get_chunks_for_resume_ids(all_resume_ids)
+    timing["chunks_fetch_ms"] = _ms(t0)
+
+    chunk_to_resume: dict[str, str] = {c["chunk_id"]: c["resume_id"] for c in chunk_records}
+    chunk_to_section: dict[str, str] = {c["chunk_id"]: c["section"] for c in chunk_records}
+    chunk_to_text: dict[str, str | None] = {c["chunk_id"]: c.get("chunk_text") for c in chunk_records}
+    op_counts["chunks_loaded_count"] = len(chunk_records)
+
+    # ── Embed HyDE hypothetical_doc or raw query ───────────────────────
+    # HyDE: embed as retrieval_document (same distribution as stored vectors)
+    # Raw query: embed as retrieval_query
+    embedder = GeminiEmbedder(embedding_model)
+    text_to_embed = hypothetical_doc or request.query
+    embed_as_doc = bool(hypothetical_doc)
+
+    t0 = time.perf_counter()
+    if embed_as_doc:
+        raw_query_vector = np.asarray(embedder.embed_texts([text_to_embed])[0], dtype=np.float32)
+        logger.info("HyDE: embedding hypothetical_doc (%d chars) as retrieval_document", len(text_to_embed))
+    else:
+        raw_query_vector = np.asarray(embedder.embed_query(text_to_embed), dtype=np.float32)
     timing["embedding_ms"] = _ms(t0)
+    op_counts["hyde_used"] = 1 if embed_as_doc else 0
+
     norm = np.linalg.norm(raw_query_vector)
     query_vector = (raw_query_vector / norm) if norm > 0 else raw_query_vector
 
-    # Benchmark all vector storage formats (including raw unnormalized search)
+    # Observability benchmark across all storage formats
     vfs = VectorFileStore()
     format_timings, format_counts = _benchmark_vector_formats(vfs, UNIVERSAL_VECTOR_STORE, raw_query_vector)
     timing.update(format_timings)
     op_counts.update(format_counts)
-
-    # Targeted cosine similarity against SQL-filtered chunks only (uses NPY — 3.1)
-    all_vectors, all_ids = vfs.read(UNIVERSAL_VECTOR_STORE)
-    score_by_chunk: dict[str, float] = {}
     op_counts["vector_dims_count"] = int(query_vector.shape[0])
 
-    if len(all_ids) > 0:
-        id_to_pos = {cid: i for i, cid in enumerate(all_ids)}
-        target_chunks = [cid for cid in chunk_to_resume if cid in id_to_pos]
-        op_counts["vectors_scored_count"] = len(target_chunks)
-        if target_chunks:
-            positions = [id_to_pos[cid] for cid in target_chunks]
-            subset = all_vectors[positions]
-            t0 = time.perf_counter()
-            scores = (subset @ query_vector).tolist()
-            timing["cosine_scoring_ms"] = _ms(t0)
-            for cid, score in zip(target_chunks, scores):
-                score_by_chunk[cid] = float(score)
+    # ── Score chunks via HNSW or exact KNN ────────────────────────────
+    allowed_chunk_ids = list(chunk_to_resume.keys())
+    op_counts["vectors_scored_count"] = len(allowed_chunk_ids)
+
+    score_by_chunk: dict[str, float] = {}
+    if allowed_chunk_ids:
+        hnsw = get_hnsw_store(config.vector_size)
+        t0 = time.perf_counter()
+        results = hnsw.search_filtered(query_vector, allowed_chunk_ids, k=len(allowed_chunk_ids))
+        timing["cosine_scoring_ms"] = _ms(t0)
+        score_by_chunk = {cid: score for cid, score in results}
 
     if not score_by_chunk:
         logger.warning(
@@ -322,15 +332,18 @@ def retrieve_documents(request: RetrieveRequest) -> RetrieveResponse:
         )
         return RetrieveResponse(query=request.query, k_used=k, candidates=fallback_candidates, logs=logs)
 
-    # Best score + matched sections per resume
+    # ── Aggregate best score + winning chunk per resume ────────────────
     best_score: dict[str, float] = {}
+    best_chunk_id: dict[str, str] = {}
     best_section: dict[str, str] = {}
     matched_sections: dict[str, list[str]] = {}
+
     for cid, score in score_by_chunk.items():
         rid = chunk_to_resume[cid]
         section = chunk_to_section[cid]
         if rid not in best_score or score > best_score[rid]:
             best_score[rid] = score
+            best_chunk_id[rid] = cid
             best_section[rid] = section
         matched_sections.setdefault(rid, [])
         if section not in matched_sections[rid]:
@@ -358,6 +371,11 @@ def retrieve_documents(request: RetrieveRequest) -> RetrieveResponse:
         row = resume_rows_by_id.get(rid, {})
         sec = best_section.get(rid, "")
         score = best_score[rid]
+        winning_cid = best_chunk_id.get(rid)
+
+        # Prefer the actual matched chunk text; fall back to full section text
+        matched_text = (chunk_to_text.get(winning_cid) if winning_cid else None) or row.get(sec)
+
         candidates_v.append(CandidateResult(
             user_id=row.get("user_id", rid),
             resume_id=rid,
@@ -373,7 +391,7 @@ def retrieve_documents(request: RetrieveRequest) -> RetrieveResponse:
             matched_sections=matched_sections.get(rid, []),
             match_type="vector",
             match_reason=f"Semantic vector search matched on '{sec.replace('_', ' ')}' section — cosine similarity {score:.1%}",
-            matched_chunk_text=row.get(sec),
+            matched_chunk_text=matched_text,
         ))
 
     sections_used = set(chunk_to_section[cid] for cid in score_by_chunk)
@@ -387,13 +405,13 @@ def retrieve_documents(request: RetrieveRequest) -> RetrieveResponse:
         routing_reason=routing_reason,
         vector_search_used=True,
         vector_section_used=vector_section_used,
-        vector_query=request.query,
+        vector_query=hypothetical_doc or request.query,
         timing_ms={**timing, "total_ms": _ms(t_total)},
         op_counts=op_counts,
     )
 
     logger.info(
-        "RDS + Vector complete: %d unique candidates from %d resumes",
-        len(candidates_v), len(resume_rows),
+        "RDS + Vector complete: %d unique candidates from %d resumes | hyde=%s",
+        len(candidates_v), len(resume_rows), embed_as_doc,
     )
     return RetrieveResponse(query=request.query, k_used=k, candidates=candidates_v, logs=logs)

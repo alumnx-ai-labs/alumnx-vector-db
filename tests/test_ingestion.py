@@ -61,6 +61,7 @@ def deps(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("app.services.ingestion.parse_resume", lambda _: FAKE_PARSED)
     monkeypatch.setattr("app.services.ingestion._hash_file", lambda _: FAKE_HASH)
+    monkeypatch.setattr("app.services.ingestion.chunk_section", lambda section, text: [text])
 
     return SimpleNamespace(pg=pg, vfs=vfs, cfg=cfg)
 
@@ -75,12 +76,12 @@ def test_ingest_new_resume_creates_sections_and_user(deps):
     assert resp.resume_id is not None
     assert resp.user_id is not None
 
-    # All 6 embeddable sections ingested
+    # With chunking, 2 sections (work_experience_text + projects) are embedded
     assert len(resp.sections_ingested) == len(EMBEDDABLE_SECTIONS)
 
-    # 6 vectors in the flat store (one per section)
+    # 2 vectors in the flat store (one chunk per section with passthrough mock)
     _, ids = deps.vfs.read(UNIVERSAL_VECTOR_STORE)
-    assert len(ids) == 6
+    assert len(ids) == 2
 
     # Resume row written to postgres
     assert len(deps.pg._resumes) == 1
@@ -92,9 +93,9 @@ def test_ingest_duplicate_hash_skips_processing(deps):
     second = ingest_file(file_name="different_name.pdf", file_path="/tmp/resume.pdf", embedding_model=None)
 
     assert first.resume_id == second.resume_id
-    # Still only 6 vectors — duplicate was skipped
+    # Still only 2 vectors — duplicate was skipped
     _, ids = deps.vfs.read(UNIVERSAL_VECTOR_STORE)
-    assert len(ids) == 6
+    assert len(ids) == 2
 
 
 def test_ingest_different_content_creates_new_resume(deps, monkeypatch):
@@ -104,9 +105,9 @@ def test_ingest_different_content_creates_new_resume(deps, monkeypatch):
     second = ingest_file(file_name="resume2.pdf", file_path="/tmp/b.pdf", embedding_model=None)
 
     assert first.resume_id != second.resume_id
-    # 12 vectors total — 6 sections × 2 resumes, all in one flat file
+    # 4 vectors total — 2 chunks × 2 resumes, all in one flat file
     _, ids = deps.vfs.read(UNIVERSAL_VECTOR_STORE)
-    assert len(ids) == 12
+    assert len(ids) == 4
 
 
 def test_ingest_same_person_reuses_user_id(deps, monkeypatch):
@@ -131,3 +132,31 @@ def test_ingest_no_extractable_text_raises(deps, monkeypatch):
     monkeypatch.setattr("app.services.ingestion.extract_pdf_pages", lambda _: [])
     with pytest.raises(LookupError):
         ingest_file(file_name="empty.pdf", file_path="/tmp/empty.pdf", embedding_model=None)
+
+
+def test_ingest_chunks_stored_in_postgres(deps):
+    resp = ingest_file(file_name="resume.pdf", file_path="/tmp/resume.pdf", embedding_model=None)
+
+    assert len(deps.pg._chunks) > 0
+    for chunk in deps.pg._chunks.values():
+        assert chunk["resume_id"] == resp.resume_id
+        assert chunk["section"] in EMBEDDABLE_SECTIONS
+        assert "chunk_text" in chunk
+        assert "chunk_id" in chunk
+
+
+def test_ingest_multi_chunk_section_creates_multiple_vectors(deps, monkeypatch):
+    """Mock chunk_section to produce 3 chunks for work_experience and 2 for projects → 5 total."""
+    def fake_chunk_section(section, text):
+        if section == "work_experience_text":
+            return [text + f" [job {i}]" for i in range(3)]
+        if section == "projects":
+            return [text + f" [project {i}]" for i in range(2)]
+        return [text]
+
+    monkeypatch.setattr("app.services.ingestion.chunk_section", fake_chunk_section)
+
+    ingest_file(file_name="resume.pdf", file_path="/tmp/resume.pdf", embedding_model=None)
+
+    _, ids = deps.vfs.read(UNIVERSAL_VECTOR_STORE)
+    assert len(ids) == 5  # 3 work_experience + 2 projects

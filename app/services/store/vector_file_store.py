@@ -312,7 +312,7 @@ class VectorFileStore:
             return
         existing = np.load(raw_path, mmap_mode="r")
         existing_ids = np.load(ids_path, allow_pickle=False).tolist()
-        mask = np.array([cid not in ids_to_remove for cid in existing_ids])
+        mask = np.array([cid not in ids_to_remove for cid in existing_ids], dtype=bool)
         kept_ids = [cid for cid, keep in zip(existing_ids, mask) if keep]
         kept_vectors = existing[mask]
         np.save(raw_path, kept_vectors.astype(np.float32))

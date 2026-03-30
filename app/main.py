@@ -12,7 +12,9 @@ from app.routers.documents import router as documents_router
 from app.routers.ingest import router as ingest_router
 from app.routers.retrieve import router as retrieve_router
 from app.errors import error_response
+from app.config import get_config
 from app.services.ingestion import UNIVERSAL_VECTOR_STORE
+from app.services.store.hnsw_store import get_hnsw_store
 from app.services.store.postgres_store import PostgresStore
 from app.services.store.vector_file_store import VectorFileStore
 
@@ -32,6 +34,12 @@ async def lifespan(_: FastAPI):
     logger.info("Syncing alternate vector store formats (3.3, 3.4)...")
     VectorFileStore().sync_alternate_formats(UNIVERSAL_VECTOR_STORE)
     logger.info("Vector store sync complete.")
+    logger.info("Building HNSW index...")
+    vfs = VectorFileStore()
+    vectors, chunk_ids = vfs.read(UNIVERSAL_VECTOR_STORE)
+    hnsw = get_hnsw_store(get_config().vector_size)
+    hnsw.build(vectors, chunk_ids)
+    logger.info("HNSW index ready: %d vectors", len(chunk_ids))
     yield
 
 

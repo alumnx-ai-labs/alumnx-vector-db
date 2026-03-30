@@ -81,7 +81,24 @@ def client(monkeypatch):
             sql="SELECT resume_id FROM resumes WHERE is_active = TRUE",
             needs_vector=True,
             reason="Mock: always use vector search in tests.",
+            hypothetical_doc="Worked as Python engineer building ML systems.",
         ),
+    )
+    monkeypatch.setattr(
+        "app.services.ingestion.chunk_section",
+        lambda section, text: [text],
+    )
+
+    class FakeHNSW:
+        def __init__(self, dims): pass
+        def build(self, vectors, ids): pass
+        def search_filtered(self, query, allowed_ids, k):
+            return [(cid, 0.85) for cid in allowed_ids[:k]]
+
+    fake_hnsw = FakeHNSW(3)
+    monkeypatch.setattr(
+        "app.services.retrieval_service.get_hnsw_store",
+        lambda dims: fake_hnsw,
     )
 
     yield TestClient(app)
@@ -99,8 +116,8 @@ def test_ingest_pdf_returns_resume_id_and_sections(client):
     assert payload["source_filename"] == "john_resume.pdf"
     assert payload["name"] == "John Smith"
     assert "Python" in payload["skills"]
-    assert len(payload["sections_ingested"]) == 1  # one vector per resume (work_experience_text)
-    assert payload["sections_ingested"][0]["section_name"] == "work_experience_text"
+    # With chunking, work_experience_text AND projects are both embedded (>= 1 section)
+    assert len(payload["sections_ingested"]) >= 1
 
 
 def test_ingest_non_pdf_returns_400(client):
