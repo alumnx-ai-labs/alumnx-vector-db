@@ -80,6 +80,9 @@ class MockPostgresStore:
                                 "phone": u.get("phone"), "location": u.get("location")})
         return result
 
+    def get_active_resume_count(self) -> int:
+        return sum(1 for r in self._resumes.values() if r.get("is_active"))
+
     # ── Text-to-SQL ───────────────────────────────────────────────────
 
     def execute_sql_query(self, sql: str) -> list[str]:
@@ -137,6 +140,9 @@ class MockVectorFileStore:
     def __init__(self) -> None:
         self._vectors: dict[str, np.ndarray] = {}
         self._ids: dict[str, list[str]] = {}
+        self._raw_vectors: dict[str, np.ndarray] = {}
+        self._raw_ids: dict[str, list[str]] = {}
+        self._jsonl_records: dict[str, list[dict]] = {}
 
     def read(self, kb_name: str) -> tuple[np.ndarray, list[str]]:
         if kb_name not in self._ids:
@@ -156,6 +162,35 @@ class MockVectorFileStore:
         else:
             self._vectors[kb_name] = vectors.astype(np.float32)
             self._ids[kb_name] = list(chunk_ids)
+        if text_records:
+            self._jsonl_records.setdefault(kb_name, []).extend(record.copy() for record in text_records)
+
+    def append_raw(self, kb_name: str, chunk_ids: list[str], vectors: np.ndarray) -> None:
+        if kb_name in self._raw_ids:
+            self._raw_vectors[kb_name] = np.vstack([self._raw_vectors[kb_name], vectors]).astype(np.float32)
+            self._raw_ids[kb_name].extend(chunk_ids)
+        else:
+            self._raw_vectors[kb_name] = vectors.astype(np.float32)
+            self._raw_ids[kb_name] = list(chunk_ids)
+
+    def read_raw(self, kb_name: str) -> tuple[np.ndarray, list[str]]:
+        if kb_name not in self._raw_ids:
+            return np.empty((0, 3), dtype=np.float32), []
+        return self._raw_vectors[kb_name].copy(), list(self._raw_ids[kb_name])
+
+    def read_jsonl(self, kb_name: str) -> list[dict]:
+        return [record.copy() for record in self._jsonl_records.get(kb_name, [])]
+
+    def read_normalized_gz(self, kb_name: str) -> list[dict]:
+        vectors, ids = self.read(kb_name)
+        return [
+            {"chunk_id": chunk_id, "vector": vectors[idx].tolist()}
+            for idx, chunk_id in enumerate(ids)
+        ]
+
+    def read_index(self, kb_name: str) -> dict[str, np.ndarray]:
+        vectors, ids = self.read(kb_name)
+        return {chunk_id: vectors[idx].copy() for idx, chunk_id in enumerate(ids)}
 
     def remove_chunk_ids(self, kb_name: str, ids_to_remove: set[str]) -> None:
         if kb_name not in self._ids:
@@ -165,6 +200,17 @@ class MockVectorFileStore:
         mask = np.array([cid not in ids_to_remove for cid in old_ids])
         self._ids[kb_name] = [cid for cid, keep in zip(old_ids, mask) if keep]
         self._vectors[kb_name] = old_vecs[mask].astype(np.float32)
+        if kb_name in self._raw_ids:
+            raw_ids = self._raw_ids[kb_name]
+            raw_vecs = self._raw_vectors[kb_name]
+            raw_mask = np.array([cid not in ids_to_remove for cid in raw_ids])
+            self._raw_ids[kb_name] = [cid for cid, keep in zip(raw_ids, raw_mask) if keep]
+            self._raw_vectors[kb_name] = raw_vecs[raw_mask].astype(np.float32)
+        if kb_name in self._jsonl_records:
+            self._jsonl_records[kb_name] = [
+                record for record in self._jsonl_records[kb_name]
+                if record.get("chunk_id") not in ids_to_remove
+            ]
 
     def list_kb_names(self) -> list[str]:
         return sorted(self._ids.keys())
@@ -172,3 +218,6 @@ class MockVectorFileStore:
     def delete_kb(self, kb_name: str) -> None:
         self._vectors.pop(kb_name, None)
         self._ids.pop(kb_name, None)
+        self._raw_vectors.pop(kb_name, None)
+        self._raw_ids.pop(kb_name, None)
+        self._jsonl_records.pop(kb_name, None)

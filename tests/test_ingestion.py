@@ -75,12 +75,13 @@ def test_ingest_new_resume_creates_sections_and_user(deps):
     assert resp.resume_id is not None
     assert resp.user_id is not None
 
-    # All 6 embeddable sections ingested
-    assert len(resp.sections_ingested) == len(EMBEDDABLE_SECTIONS)
+    # Only the primary section is embedded for each resume.
+    assert len(resp.sections_ingested) == 1
+    assert resp.sections_ingested[0].section_name == "work_experience_text"
 
-    # 6 vectors in the flat store (one per section)
+    # One vector in the flat store (one primary section per resume)
     _, ids = deps.vfs.read(UNIVERSAL_VECTOR_STORE)
-    assert len(ids) == 6
+    assert len(ids) == 1
 
     # Resume row written to postgres
     assert len(deps.pg._resumes) == 1
@@ -92,9 +93,9 @@ def test_ingest_duplicate_hash_skips_processing(deps):
     second = ingest_file(file_name="different_name.pdf", file_path="/tmp/resume.pdf", embedding_model=None)
 
     assert first.resume_id == second.resume_id
-    # Still only 6 vectors — duplicate was skipped
+    # Still only one vector — duplicate was skipped
     _, ids = deps.vfs.read(UNIVERSAL_VECTOR_STORE)
-    assert len(ids) == 6
+    assert len(ids) == 1
 
 
 def test_ingest_different_content_creates_new_resume(deps, monkeypatch):
@@ -104,9 +105,9 @@ def test_ingest_different_content_creates_new_resume(deps, monkeypatch):
     second = ingest_file(file_name="resume2.pdf", file_path="/tmp/b.pdf", embedding_model=None)
 
     assert first.resume_id != second.resume_id
-    # 12 vectors total — 6 sections × 2 resumes, all in one flat file
+    # Two vectors total — one primary section per resume
     _, ids = deps.vfs.read(UNIVERSAL_VECTOR_STORE)
-    assert len(ids) == 12
+    assert len(ids) == 2
 
 
 def test_ingest_same_person_reuses_user_id(deps, monkeypatch):
@@ -123,8 +124,7 @@ def test_ingest_same_person_reuses_user_id(deps, monkeypatch):
 def test_ingest_section_names_correct(deps):
     resp = ingest_file(file_name="resume.pdf", file_path="/tmp/resume.pdf", embedding_model=None)
     section_names = [s.section_name for s in resp.sections_ingested]
-    for expected in EMBEDDABLE_SECTIONS:
-        assert expected in section_names
+    assert section_names == ["work_experience_text"]
 
 
 def test_ingest_no_extractable_text_raises(deps, monkeypatch):
