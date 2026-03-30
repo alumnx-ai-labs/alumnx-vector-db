@@ -17,14 +17,15 @@ from app.utils import now_ist_iso
 
 logger = logging.getLogger("nexvec.ingestion")
 
-# Fixed embeddable sections (work_experience_years is numeric — stored in DB, not embedded)
+# ONE vector per resume, in priority order:
+#   1. work_experience_text — primary semantic signal (most resumes have this)
+#   2. projects             — fallback for freshers with no job history
+#
+# We embed the FIRST non-empty section and stop — exactly 1 Gemini call per resume.
+# Everything else (objectives, education, skills, achievements) is handled by SQL.
 EMBEDDABLE_SECTIONS = [
-    "objectives",
     "work_experience_text",
     "projects",
-    "education",
-    "skills",
-    "achievements",
 ]
 
 UNIVERSAL_VECTOR_STORE = "nex_vec"
@@ -123,45 +124,36 @@ def ingest_file(
     logger.info("User: user_id=%s (%s)", user_id,
                 "existing" if pg.get_user_id_by_contact(parsed.email, parsed.phone) else "new")
 
-    # ── Embed 6 sections ──────────────────────────────────────────────
+    # ── Embed ONE section (work_experience_text, else projects) ───────
     resume_id = str(uuid.uuid4())
     embedder = GeminiEmbedder(active_model)
 
-    # Collect non-empty sections for batch embedding
-    to_embed = [
-        (section, _section_text(parsed, section))
-        for section in EMBEDDABLE_SECTIONS
-    ]
-    to_embed = [(s, t) for s, t in to_embed if t]
+    # Pick the first non-empty section in priority order — exactly 1 embedding call.
+    primary_section: str | None = None
+    primary_text: str | None = None
+    for section in EMBEDDABLE_SECTIONS:
+        text = _section_text(parsed, section)
+        if text:
+            primary_section = section
+            primary_text = text
+            break
 
     chunk_ids: dict[str, str] = {}
 
-    if to_embed:
-        section_names_to_embed = [s for s, _ in to_embed]
-        texts_to_embed = [t for _, t in to_embed]
-        raw_vectors = embedder.embed_texts(texts_to_embed)
-
-        all_cids: list[str] = []
-        normed_matrix: list[np.ndarray] = []
-
-        for section, raw_vec in zip(section_names_to_embed, raw_vectors):
-            cid = str(uuid.uuid4())
-            chunk_ids[section] = cid
-            normed = _normalise(np.asarray(raw_vec, dtype=np.float32))
-            all_cids.append(cid)
-            normed_matrix.append(normed)
-
-        # All section vectors for this resume appended to the single flat store
-        stacked = np.stack(normed_matrix).astype(np.float32)
+    if primary_section and primary_text:
+        raw_vec = embedder.embed_texts([primary_text])[0]
+        cid = str(uuid.uuid4())
+        chunk_ids[primary_section] = cid
+        raw_arr = np.asarray(raw_vec, dtype=np.float32)
+        normed = _normalise(raw_arr)
+        stacked = np.stack([normed]).astype(np.float32)
         vfs.append(
             UNIVERSAL_VECTOR_STORE,
-            all_cids,
+            [cid],
             stacked,
-            text_records=[
-                {"chunk_id": cid, "resume_id": resume_id, "vector": vec.tolist()}
-                for cid, vec in zip(all_cids, stacked)
-            ],
+            text_records=[{"chunk_id": cid, "resume_id": resume_id, "vector": normed.tolist()}],
         )
+        vfs.append_raw(UNIVERSAL_VECTOR_STORE, [cid], np.stack([raw_arr]))
 
     # ── Persist resume row ────────────────────────────────────────────
     pg.insert_resume({

@@ -121,7 +121,7 @@ def parse_resume(full_text: str) -> ParsedResume:
 
     def _safe_float(val) -> float | None:
         try:
-            return float(val) if val is not None else None
+            return round(float(val), 1) if val is not None else None
         except (TypeError, ValueError):
             return None
 

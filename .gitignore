@@ -63,4 +63,4 @@ test.pdf
 test_upload.py
 
 # ── Tool/build artifacts ──────────────────────────────────────────────────────
-.claude/
+#.claude/

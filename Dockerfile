@@ -26,7 +26,7 @@ COPY . .
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Install NLTK punkt data in runtime
-RUN python -m nltk.downloader punkt punkt_tab
+RUN uv run python -m nltk.downloader punkt punkt_tab
 
 # Expose port (can be overridden by docker-compose)
 EXPOSE 8000

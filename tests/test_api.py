@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from main import app
 from tests.helpers import MockPostgresStore, MockVectorFileStore
 from app.services.llm_parser import ParsedResume
+from app.services.llm_query import QueryClassification
 
 
 FAKE_HASH = "aabbcc112233" * 4
@@ -64,6 +65,7 @@ def client(monkeypatch):
     monkeypatch.setattr("app.services.ingestion.VectorFileStore", lambda: vfs)
     monkeypatch.setattr("app.services.retrieval_service.PostgresStore", lambda: pg)
     monkeypatch.setattr("app.services.retrieval_service.VectorFileStore", lambda: vfs)
+    monkeypatch.setattr("app.routers.candidates.PostgresStore", lambda: pg)
     monkeypatch.setattr("app.routers.documents.PostgresStore", lambda: pg)
     monkeypatch.setattr("app.routers.documents.VectorFileStore", lambda: vfs)
     monkeypatch.setattr("app.main.PostgresStore", lambda: pg)
@@ -73,10 +75,14 @@ def client(monkeypatch):
     )
     monkeypatch.setattr("app.services.ingestion.parse_resume", lambda _: FAKE_PARSED)
     monkeypatch.setattr("app.services.ingestion._hash_file", lambda _: FAKE_HASH)
-    # Text-to-SQL: return a fixed SQL string (execution handled by mock pg)
+    # Text-to-SQL: return a fixed classification (execution handled by mock pg)
     monkeypatch.setattr(
-        "app.services.retrieval_service.generate_sql_query",
-        lambda _: "SELECT resume_id FROM resumes WHERE is_active = TRUE",
+        "app.services.retrieval_service.classify_and_generate_sql",
+        lambda _: QueryClassification(
+            sql="SELECT resume_id FROM resumes WHERE is_active = TRUE",
+            needs_vector=True,
+            reason="Mock: always use vector search in tests.",
+        ),
     )
 
     yield TestClient(app)
@@ -94,7 +100,8 @@ def test_ingest_pdf_returns_resume_id_and_sections(client):
     assert payload["source_filename"] == "john_resume.pdf"
     assert payload["name"] == "John Smith"
     assert "Python" in payload["skills"]
-    assert len(payload["sections_ingested"]) == 6  # all 6 embeddable sections
+    assert len(payload["sections_ingested"]) == 1  # one vector per resume (work_experience_text)
+    assert payload["sections_ingested"][0]["section_name"] == "work_experience_text"
 
 
 def test_ingest_non_pdf_returns_400(client):

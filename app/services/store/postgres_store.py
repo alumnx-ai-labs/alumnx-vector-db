@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import psycopg2
 import psycopg2.extras
@@ -290,23 +291,42 @@ class PostgresStore:
 
     # ── Text-to-SQL execution ─────────────────────────────────────────
 
+    # Dangerous DML/DDL keywords that must never appear in LLM-generated SQL
+    _DANGEROUS_SQL = re.compile(
+        r"\b(DROP|DELETE|UPDATE|INSERT|TRUNCATE|ALTER|CREATE|GRANT|REVOKE|EXECUTE|EXEC|COPY|VACUUM)\b",
+        re.IGNORECASE,
+    )
+
     def execute_sql_query(self, sql: str) -> list[str]:
         """
         Execute an LLM-generated SELECT query and return the first column
         of each row (expected to be resume_id).
 
-        Only SELECT statements are permitted.
+        Defence-in-depth:
+          1. Must start with SELECT
+          2. Must not contain any DML/DDL keywords (prompt-injection guard)
         """
-        if not sql.strip().upper().startswith("SELECT"):
+        stripped = sql.strip()
+        if not stripped.upper().startswith("SELECT"):
             logger.warning("Rejected non-SELECT SQL: %s", sql[:100])
+            return []
+        if self._DANGEROUS_SQL.search(stripped):
+            logger.warning("Rejected SQL containing dangerous keywords: %s", sql[:200])
             return []
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql)
+                cur.execute(stripped)
                 rows = cur.fetchall()
                 return [str(row[0]) for row in rows if row[0]]
 
     # ── Document operations (for /documents endpoints) ────────────────
+
+    def get_active_resume_count(self) -> int:
+        """Return count of all active resumes — used for query observability."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM resumes WHERE is_active = TRUE")
+                return cur.fetchone()[0]
 
     def list_documents(self) -> list[dict]:
         sql = """

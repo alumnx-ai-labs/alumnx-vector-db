@@ -1,56 +1,53 @@
 # NexVec
 
-NexVec is a Phase 1 FastAPI service for ingesting PDF documents, chunking them, generating embeddings, storing them in JSONL files, and retrieving relevant chunks with KNN search.
+NexVec is a high-performance Phase 1 FastAPI service for document intelligence. It ingests PDF documents (resumes), extracts structured data and semantic chunks, and performs **Hybrid Retrieval** using PostgreSQL and Vector Similarity.
 
-## Requirements
+## 🚀 Quick Start (Docker)
 
 - Python 3.12+
 - `uv` for dependency management
 - A valid `GOOGLE_API_KEY` for local runtime usage
 
-## Project Layout
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/your-username/alumnx-vector-db.git
+    cd alumnx-vector-db
+    ```
 
-```text
-nexvec/
-  app/
-  tests/
-  config.yaml
-  .env
-  requirements.txt
-  main.py
-```
+2.  **Configure environment**:
+    Copy `.env.example` to `.env` and add your **Google Gemini API Key**.
+    ```bash
+    cp .env.example .env
+    ```
 
-## Setup
+3.  **Run with Docker Compose**:
+    ```bash
+    docker-compose up --build
+    ```
 
-1. Open a terminal in the `nexvec/` directory.
-2. Create or activate your virtual environment.
+NexVec will be available at:
+-   **API**: [http://localhost:8000](http://localhost:8000)
+-   **Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-On Windows PowerShell:
+---
 
-```powershell
-.\env\Scripts\python.exe --version
-```
+## 🛠️ Local Development Setup
 
-If you need to create the virtual environment:
+If you prefer running without Docker:
 
-```powershell
-python -m venv env
-```
-
-3. Install dependencies:
+### Prerequisites
+-   Python 3.12+
+-   [uv](https://github.com/astral-sh/uv) (recommended) or `pip`
+-   PostgreSQL 16+
 
 ```bash
 uv sync
 ```
-
-## Configure `.env`
-
-Create a file named `.env` in the `nexvec/` directory.
-
-Example:
-
-```env
-GOOGLE_API_KEY=your_api_key_here
+Or using **pip**:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 The app loads `.env` automatically on startup.
@@ -90,34 +87,46 @@ The test suite uses dummy environment defaults in `tests/conftest.py`, so CI can
 - `POST /ingest`
 - `POST /retrieve`
 
-## Notes
+## 🏗️ Architecture: Hybrid Retrieval
 
-- The vector store is created lazily when ingest or retrieve first touches storage.
-- `ann` is not supported in Phase 1 and returns HTTP 400.
-- `excludevectors=true` can be sent to `/retrieve` to omit `embedding_vector` from the response.
+NexVec uses a two-stage retrieval pipeline:
 
-## Project Objective
+1.  **Stage 1: SQL Filtering (PostgreSQL)**
+    LLM (Gemini) analyzes the natural language query and generates optimized SQL to filter candidates by metadata (experience years, skills, location, etc.).
+2.  **Stage 2: Vector Reranking (NumPy)**
+    Semantic similarity is computed against chunks of the documents filtered in Stage 1 to find the most relevant context.
 
-This project aims to build a vector database system where data is converted into embeddings and stored efficiently for similarity search.
+## 📁 Project Layout
 
-## What We Are Trying to Achieve
+```text
+alumnx-vector-db/
+├── app/                  # FastAPI Application
+│   ├── routers/          # API Endpoints
+│   ├── services/         # Core Logic (Ingestion, Retrieval, Parsing)
+│   └── models.py         # Pydantic Schemas
+├── vector_store/         # Metadata & Embeddings (Stored locally)
+├── config.yaml           # Global Constants
+├── .env                  # Secrets (Ignored by Git)
+├── Dockerfile            # Container definition
+├── docker-compose.yml    # Multi-container orchestration (App + DB)
+├── main.py               # Entrypoint
+└── requirements.txt      # Dependencies
+```
 
-- Convert raw data into chunks
-- Generate embeddings for each chunk
-- Store embeddings as vectors
-- Separate metadata and store it in MySQL
-- Enable efficient search using vector similarity
+## 🛠️ Key Features
 
-## Features
+-   **Deep Ingestion**: Chunking PDF resumes using advanced extraction.
+-   **AI Parsing**: Uses Gemini to extract structured user profiles (experience, skills, contact).
+-   **Structured Search**: Filter candidates by complex criteria via natural language.
+-   **Semantic Search**: KNN similarity search on extracted document sections.
+-   **Deduplication**: Automatically handles profile updates and file hash checking.
 
-- Chunking of data
-- Embedding generation
-- Vector storage
-- Metadata storage in MySQL
-- Fast retrieval system
+## 🧪 Running Tests
 
-## My Contribution
+```bash
+uv run pytest
+```
+*Note: Requires valid GOOGLE_API_KEY for tests involving LLM/Embeddings.*
 
-- Updated README documentation
-- Understood project workflow
-- Tested project setup
+---
+*Developed for Document-Intelligence and Vector-Search excellence.*
