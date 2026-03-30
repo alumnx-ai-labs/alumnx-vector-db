@@ -105,5 +105,19 @@ uv run pytest
 ```
 *Note: Requires valid GOOGLE_API_KEY for tests involving LLM/Embeddings.*
 
+## 🔀 PR Process
+
+Before raising any PR, run the unit tests locally:
+
+```bash
+python -m pytest -q
+```
+
+- For `dev`: use PRs for active feature and integration work.
+- For `main`: only raise PRs after the change is validated and ready for production.
+- In both cases, wait for GitHub Actions to pass before merge.
+
+Team workflow details are documented in [docs/pr-process.md](docs/pr-process.md).
+
 ---
 *Developed for Document-Intelligence and Vector-Search excellence.*
