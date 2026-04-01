@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from app.services.ingestion import UNIVERSAL_VECTOR_STORE
 from app.services.store.postgres_store import PostgresStore
 from app.services.store.vector_file_store import VectorFileStore
+from app.services.store.s3_store import S3Store
 
 
 router = APIRouter()
@@ -41,6 +42,10 @@ def delete_document(filename: str) -> dict:
         )
 
     all_chunk_ids = {chunk_id for _, chunk_id in section_chunks}
-    vfs.remove_chunk_ids(UNIVERSAL_VECTOR_STORE, all_chunk_ids)
+    if all_chunk_ids:
+        vfs.remove_chunk_ids(UNIVERSAL_VECTOR_STORE, all_chunk_ids)
+
+    s3_store = S3Store()
+    s3_store.delete_file(filename)
 
     return {"deleted": filename, "chunks_removed": len(section_chunks)}

@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 
 from app.errors import error_response
 from app.services.ingestion import ingest_file
+from app.services.store.s3_store import S3Store
 
 
 router = APIRouter()
@@ -41,6 +42,10 @@ async def ingest(
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as handle:
         temp_path = Path(handle.name)
         handle.write(await file.read())
+
+    # before ingest save to s3
+    s3_store = S3Store()
+    s3_store.upload_file(str(temp_path), file.filename)
 
     try:
         response = ingest_file(
