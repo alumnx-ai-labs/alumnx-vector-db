@@ -253,27 +253,43 @@ def retrieve_documents(request: RetrieveRequest) -> RetrieveResponse:
 
     # Benchmark all vector storage formats (including raw unnormalized search)
     vfs = VectorFileStore()
-    format_timings, format_counts = _benchmark_vector_formats(vfs, UNIVERSAL_VECTOR_STORE, raw_query_vector)
+    format_timings, format_counts = _benchmark_vector_formats(
+        vfs, UNIVERSAL_VECTOR_STORE, raw_query_vector
+    )
     timing.update(format_timings)
     op_counts.update(format_counts)
 
-    # Targeted cosine similarity against SQL-filtered chunks only (uses NPY — 3.1)
-    all_vectors, all_ids = vfs.read(UNIVERSAL_VECTOR_STORE)
+    # Targeted cosine similarity against SQL-filtered chunks only.
+    # Use the prebuilt normalized index (3.4) for O(#targets) lookup.
+    vector_index = vfs.read_index(UNIVERSAL_VECTOR_STORE)
     score_by_chunk: dict[str, float] = {}
     op_counts["vector_dims_count"] = int(query_vector.shape[0])
 
-    if len(all_ids) > 0:
-        id_to_pos = {cid: i for i, cid in enumerate(all_ids)}
-        target_chunks = [cid for cid in chunk_to_resume if cid in id_to_pos]
+    if vector_index:
+        target_chunks = [cid for cid in chunk_to_resume if cid in vector_index]
         op_counts["vectors_scored_count"] = len(target_chunks)
         if target_chunks:
-            positions = [id_to_pos[cid] for cid in target_chunks]
-            subset = all_vectors[positions]
+            subset = np.vstack([vector_index[cid] for cid in target_chunks]).astype(np.float32)
             t0 = time.perf_counter()
             scores = (subset @ query_vector).tolist()
             timing["cosine_scoring_ms"] = _ms(t0)
             for cid, score in zip(target_chunks, scores):
                 score_by_chunk[cid] = float(score)
+    else:
+        # Fallback: read full NPY matrix if index not available.
+        all_vectors, all_ids = vfs.read(UNIVERSAL_VECTOR_STORE)
+        if len(all_ids) > 0:
+            id_to_pos = {cid: i for i, cid in enumerate(all_ids)}
+            target_chunks = [cid for cid in chunk_to_resume if cid in id_to_pos]
+            op_counts["vectors_scored_count"] = len(target_chunks)
+            if target_chunks:
+                positions = [id_to_pos[cid] for cid in target_chunks]
+                subset = all_vectors[positions]
+                t0 = time.perf_counter()
+                scores = (subset @ query_vector).tolist()
+                timing["cosine_scoring_ms"] = _ms(t0)
+                for cid, score in zip(target_chunks, scores):
+                    score_by_chunk[cid] = float(score)
 
     if not score_by_chunk:
         logger.warning(

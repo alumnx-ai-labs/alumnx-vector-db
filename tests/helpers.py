@@ -143,6 +143,20 @@ class MockVectorFileStore:
             return np.empty((0, 3), dtype=np.float32), []
         return self._vectors[kb_name].copy(), list(self._ids[kb_name])
 
+    def read_index(self, kb_name: str) -> dict[str, np.ndarray]:
+        if kb_name not in self._ids:
+            return {}
+        return {cid: self._vectors[kb_name][i].copy() for i, cid in enumerate(self._ids[kb_name])}
+
+    def read_jsonl(self, kb_name: str) -> list[dict]:
+        return []
+
+    def read_normalized_gz(self, kb_name: str) -> list[dict]:
+        return []
+
+    def sync_alternate_formats(self, kb_name: str) -> None:
+        return
+
     def append(
         self,
         kb_name: str,
@@ -156,6 +170,9 @@ class MockVectorFileStore:
         else:
             self._vectors[kb_name] = vectors.astype(np.float32)
             self._ids[kb_name] = list(chunk_ids)
+
+    def append_raw(self, kb_name: str, chunk_ids: list[str], raw_vectors: np.ndarray) -> None:
+        self.append(kb_name, chunk_ids, raw_vectors)
 
     def remove_chunk_ids(self, kb_name: str, ids_to_remove: set[str]) -> None:
         if kb_name not in self._ids:
